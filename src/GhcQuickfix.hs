@@ -4,6 +4,7 @@
 {-# LANGUAGE GADTs #-}
 module GhcQuickfix
   ( plugin
+  , pluginOffByDefault
   ) where
 
 import           Control.Concurrent (threadDelay)
@@ -13,8 +14,11 @@ import           Control.Exception
 import qualified Control.Foldl as F
 import           Control.Monad
 import           Control.Monad.STM
+import qualified Data.Char as Char
+import           Data.Either (partitionEithers)
 import           Data.Foldable
 import           Data.IORef
+import           Data.List (stripPrefix)
 import           Data.Maybe
 import           Data.Monoid (First(..))
 import qualified Data.Text as T
@@ -24,51 +28,71 @@ import           Data.Traversable
 import qualified DeferredFolds.UnfoldlM as DF
 import qualified StmContainers.Map as SM
 import qualified System.Directory as Dir
+import qualified System.Environment as Env
 
 import qualified GhcQuickfix.GhcFacade as Ghc
 
 type ErrMap = SM.Map FilePath [T.Text]
 
--- TODO add options for
--- error file path
--- file path modifier source:replace
 plugin :: Ghc.Plugin
 plugin = Ghc.defaultPlugin
-  { Ghc.driverPlugin = modifyHscEnv
+  { Ghc.driverPlugin = modifyHscEnv False
   , Ghc.pluginRecompile = mempty
   }
 
--- | Background process that writes the errors file when errors change. Adds a
+-- | For use with repl-alliance, where this plugin should be off by default
+pluginOffByDefault :: Ghc.Plugin
+pluginOffByDefault = plugin
+  { Ghc.driverPlugin = modifyHscEnv True }
+
+-- | Background process that writes the quickfix file when errors change. Adds a
 -- delay to mitigate excessive IO.
-writeErrorsLoop :: ErrMap -> TVar Bool -> IO ()
-writeErrorsLoop errMap updated = forever $ do
+writeQuickfixLoop :: Maybe FilePath -> ErrMap -> TVar Bool -> IO ()
+writeQuickfixLoop mErrFilePath errMap updated = forever $ do
   msgs <- atomically $ do
     check =<< readTVar updated
     writeTVar updated False
     DF.foldM (F.generalize F.list) (SM.unfoldlM errMap)
   prunedMsgs <- pruneDeletedFiles msgs errMap
-  TIO.writeFile "errors.err" $ T.unlines prunedMsgs
+  TIO.writeFile (fromMaybe "errors.err" mErrFilePath) $ T.unlines prunedMsgs
   threadDelay 200_000 -- 200ms
 
-parseFilePathModifier :: [Ghc.CommandLineOption] -> [T.Text -> T.Text]
-parseFilePathModifier = mapMaybe getModifier
+parseFilePathModifier :: [Ghc.CommandLineOption] -> Either String [T.Text -> T.Text]
+parseFilePathModifier opts =
+  case partitionEithers (mapMaybe getModifier opts) of
+    ([], modifiers) -> Right modifiers
+    (errs, _) -> Left (unlines errs)
   where
-  getModifier = \case
-    '-':'-':'r':'e':'p':'l':'a':'c':'e':'-':'f':'i':'l':'e':'-':'p':'a':'t':'h':'=':pat
-      | [needle, replace] <- T.split (== ':') (T.pack pat) ->
-        Just $ T.replace needle replace
-    _ -> Nothing
+  getModifier opt = do
+    pat <- stripPrefix "--quickfix-path-replace=" opt
+    case T.split (== ':') (T.pack pat) of
+      [needle, replace] -> Just . Right $ T.replace needle replace
+      _ -> Just . Left $ "Malformed --quickfix-path-replace argument: expected format 'needle:replace', got '" ++ pat ++ "'"
 
-modifyHscEnv :: [Ghc.CommandLineOption] -> Ghc.HscEnv -> IO Ghc.HscEnv
-modifyHscEnv opts hscEnv = do
-    print opts
-    errMap <- SM.newIO
-    errsUpdated <- newTVarIO False
-    void . Async.async $ writeErrorsLoop errMap errsUpdated
-    pure hscEnv { Ghc.hsc_hooks = modifyHooks (Ghc.hsc_hooks hscEnv) errMap errsUpdated }
+parseQuickfixFilePath :: [Ghc.CommandLineOption] -> Maybe FilePath
+parseQuickfixFilePath = getFirst . foldMap (First . stripPrefix "--quickfix-file=")
+
+explicitlyEnabled :: [Ghc.CommandLineOption] -> IO Bool
+explicitlyEnabled opts = do
+  envEnabled <- (== Just "true") . fmap (map Char.toLower)
+    <$> Env.lookupEnv "GHC_QUICKFIX_ENABLED"
+  pure $ elem "--quickfix" opts || envEnabled
+
+modifyHscEnv :: Bool -> [Ghc.CommandLineOption] -> Ghc.HscEnv -> IO Ghc.HscEnv
+modifyHscEnv isOffByDefault opts hscEnv = do
+  enabled <- explicitlyEnabled opts
+  if not isOffByDefault || enabled then
+    case parseFilePathModifier opts of
+      Left err -> fail err
+      Right filePathMods -> do
+        errMap <- SM.newIO
+        errsUpdated <- newTVarIO False
+        void . Async.async $ writeQuickfixLoop (parseQuickfixFilePath opts) errMap errsUpdated
+        pure hscEnv { Ghc.hsc_hooks = modifyHooks filePathMods (Ghc.hsc_hooks hscEnv) errMap errsUpdated }
+  else
+    pure hscEnv
   where
-    filePathMods = parseFilePathModifier opts
-    modifyHooks hooks (errMap :: ErrMap) (errsUpdated :: TVar Bool) =
+    modifyHooks filePathMods hooks (errMap :: ErrMap) (errsUpdated :: TVar Bool) =
       let runPhaseOrExistingHook :: Ghc.TPhase res -> IO res
           runPhaseOrExistingHook = maybe Ghc.runPhase (\(Ghc.PhaseHook h) -> h)
             $ Ghc.runPhaseHook hooks
@@ -89,12 +113,16 @@ modifyHscEnv opts hscEnv = do
                   Ghc.T_HscPostTc _ modSummary _ _ _ ->
                     if Ghc.isEmptyMessages dsWarns
                     then atomically $ do
-                      -- Module compiled without errors or warnings so delete map entry
-                      SM.delete (Ghc.ms_hspp_file modSummary) errMap
-                      writeTVar errsUpdated True
+                      -- Module compiled without errors or warnings so delete map entry if exists
+                      let modFile = Ghc.ms_hspp_file modSummary
+                      SM.lookup modFile errMap >>= \case
+                        Nothing -> pure ()
+                        Just _ -> do
+                          SM.delete (Ghc.ms_hspp_file modSummary) errMap
+                          writeTVar errsUpdated True
                     else handleMessages filePathMods errMap errsUpdated $
                       if length tcWarnings == length dsWarns
-                      then tcWarnings
+                      then tcWarnings -- has preferred formatting
                       else dsWarns
                   _ -> pure ()
                 pure res

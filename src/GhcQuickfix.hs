@@ -161,12 +161,17 @@ formatDiagnostic filePathMods m = do
       file = TE.decodeUtf8 . Ghc.bytesFS $ Ghc.srcLocFile startLoc
       line = Ghc.srcLocLine startLoc
       col = Ghc.srcLocCol startLoc
-      msg = unwords $ unwords . lines . Ghc.renderWithContext ctx <$>
-        filter (not . Ghc.isEmpty ctx) (Ghc.unDecorated (Ghc.diagnosticMessage opts diag))
+      truncateMsg txt =
+        let truncated = T.take 200 txt
+        in if T.length txt > 200 then truncated <> "…" else truncated
+      msg = truncateMsg . T.unwords
+        $ T.unwords . T.words . T.pack
+        . Ghc.renderWithContext ctx
+        <$> filter (not . Ghc.isEmpty ctx) (Ghc.unDecorated (Ghc.diagnosticMessage opts diag))
 
   -- filename:line:column: error: message
   Just $ foldl' (flip ($)) file filePathMods
-    <> ":" <> T.show line <> ":" <> T.show col <> ": " <> severity <> ": " <> T.pack msg
+    <> ":" <> T.show line <> ":" <> T.show col <> ": " <> severity <> ": " <> msg
 
 -- | Update state given all diagnostics for a module
 handleMessages :: [T.Text -> T.Text] -> ErrMap -> TVar Bool -> Ghc.Messages Ghc.GhcMessage -> IO ()

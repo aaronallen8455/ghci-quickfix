@@ -2,7 +2,6 @@ module Main (main) where
 
 import           Control.Concurrent (threadDelay)
 import           Control.Concurrent.Async (race)
-import           Control.Exception (SomeException, try)
 import           Control.Monad
 import           Data.List (isInfixOf)
 import qualified System.Directory as Dir
@@ -27,7 +26,7 @@ testModulePath name = "test-modules/" <> name
 
 -- Wait for GHCi prompt by reading output until we see "ghci>"
 waitForPrompt :: Handle -> IO ()
-waitForPrompt hOut = void $ race (go "") (threadDelay 3_000_000)
+waitForPrompt hOut = void $ race (go "") (threadDelay 6_000_000)
   where
     go acc = do
       ready <- hReady hOut
@@ -49,12 +48,14 @@ runTest name = do
   qfExists <- Dir.doesFileExist qfFile
   when qfExists $ Dir.removeFile qfFile
 
+  hDevNull <- openFile "/dev/null" WriteMode
+
   -- Use cabal repl to keep GHC alive long enough for background thread
   (Just ghciIn, Just ghciOut, _, h) <- Proc.createProcess
     (Proc.proc "cabal" ["repl", "test-modules:" ++ name])
       { Proc.std_in = Proc.CreatePipe
       , Proc.std_out = Proc.CreatePipe
-      , Proc.std_err = Proc.CreatePipe
+      , Proc.std_err = Proc.UseHandle hDevNull
       }
   hSetBuffering ghciIn NoBuffering
 
@@ -65,6 +66,7 @@ runTest name = do
   void $ hPutStrLn ghciIn ":quit"
   void $ hClose ghciIn
   void $ Proc.waitForProcess h
+  hClose hDevNull
 
   -- Check that quickfix file was created and has expected contents
   actualContents <- readFile qfFile
@@ -88,12 +90,14 @@ runTestWarningFix = do
   -- Start with broken version (no type signature, has warning)
   Dir.copyFile mod2Broken mod2File
 
+  hDevNull <- openFile "/dev/null" WriteMode
+
   -- Use cabal repl
   (Just ghciIn, Just ghciOut, _, h) <- Proc.createProcess
     (Proc.proc "cabal" ["repl", "test-modules:WarningFix"])
       { Proc.std_in = Proc.CreatePipe
       , Proc.std_out = Proc.CreatePipe
-      , Proc.std_err = Proc.CreatePipe
+      , Proc.std_err = Proc.UseHandle hDevNull
       }
   hSetBuffering ghciIn NoBuffering
 
@@ -113,7 +117,7 @@ runTestWarningFix = do
   Dir.copyFile mod2Fixed mod2File
 
   -- Reload in the repl
-  void $ try @SomeException $ hPutStrLn ghciIn ":reload"
+  void $ hPutStrLn ghciIn ":reload"
 
   -- Wait for GHCi prompt after reload
   waitForPrompt ghciOut
@@ -127,6 +131,7 @@ runTestWarningFix = do
   void $ hPutStrLn ghciIn ":quit"
   void $ hClose ghciIn
   void $ Proc.waitForProcess h
+  hClose hDevNull
 
   -- Clean up
   Dir.removeFile qfFile

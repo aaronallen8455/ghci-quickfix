@@ -1,8 +1,8 @@
 cabal-version:      3.0
 name:               ghci-quickfix
 version:            0.1.0.0
--- synopsis:
--- description:
+synopsis:           GHC plugin that writes errors to a file for use with quickfix
+description:        GHC plugin that writes errors to a file for use with quickfix
 license:            BSD-3-Clause
 license-file:       LICENSE
 author:             Aaron Allen
@@ -11,6 +11,8 @@ maintainer:         aaronallen8455@gmail.com
 category:           Development
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
+                    README.md
+tested-with: GHC == 9.14.1, GHC == 9.12.1, GHC == 9.10.1, GHC == 9.8.1
 -- extra-source-files:
 
 common warnings
@@ -22,14 +24,14 @@ library
     other-modules: GhciQuickfix.GhcFacade
     -- other-extensions:
     build-depends:    base,
-                      ghc,
+                      ghc >= 9.8 && < 9.15,
                       text,
-                      async,
-                      stm-containers,
+                      async >= 2.2 && < 3,
+                      stm-containers >= 1.2 && < 1.3,
                       directory,
                       stm,
-                      deferred-folds,
-                      foldl
+                      deferred-folds >= 0.9 && < 1,
+                      foldl >= 1 && < 2
     hs-source-dirs:   src
     default-language: GHC2021
 
@@ -41,6 +43,7 @@ test-suite ghci-quickfix-test
     type:             exitcode-stdio-1.0
     hs-source-dirs:   test
     main-is:          Main.hs
+    ghc-options: -threaded -with-rtsopts=-N
     build-depends:
         base,
         ghci-quickfix,

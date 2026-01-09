@@ -175,7 +175,8 @@ formatDiagnostic filePathMods m = do
 
   -- filename:line:column: error: message
   Just $ foldl' (flip ($)) file filePathMods
-    <> ":" <> T.show line <> ":" <> T.show col <> ": " <> severity <> ": " <> msg
+    <> ":" <> T.pack (show line) <> ":" <> T.pack (show col) <> ": "
+    <> severity <> ": " <> msg
 
 -- | Update state given all diagnostics for a module
 handleMessages :: Bool -> [T.Text -> T.Text] -> ErrMap -> TVar Bool -> Ghc.Messages Ghc.GhcMessage -> IO ()

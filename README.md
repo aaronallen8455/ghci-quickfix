@@ -75,7 +75,7 @@ Plugin options are passed using the `--fplugin-opt` flag. For example:
 
 ## Compatibility
 
-This plugin aims to support the 4 latest GHC major releases (i.e. `9.8.*` through `9.14.*`).
+This plugin aims to support the 4 latest GHC major releases (i.e. `9.6.*` through `9.12.*`).
 Check the cabal file for the currently supported versions.
 
 ## Output Format

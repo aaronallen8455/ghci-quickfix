@@ -49,13 +49,13 @@ pluginOffByDefault = plugin
 -- delay to mitigate excessive IO.
 writeQuickfixLoop :: Maybe FilePath -> ErrMap -> TVar Bool -> IO ()
 writeQuickfixLoop mErrFilePath errMap updated = forever $ do
-  msgs <- atomically $ do
-    check =<< readTVar updated
-    writeTVar updated False
-    DF.foldM (F.generalize F.list) (SM.unfoldlM errMap)
-  prunedMsgs <- pruneDeletedFiles msgs errMap
-  TIO.writeFile (fromMaybe "errors.err" mErrFilePath) $ T.unlines prunedMsgs
-  threadDelay 200_000 -- 200ms
+    msgs <- atomically $ do
+      check =<< readTVar updated
+      writeTVar updated False
+      DF.foldM (F.generalize F.list) (SM.unfoldlM errMap)
+    prunedMsgs <- pruneDeletedFiles msgs errMap
+    TIO.writeFile (fromMaybe "errors.err" mErrFilePath) $ T.unlines prunedMsgs
+    threadDelay 200_000 -- 200ms
 
 parseFilePathModifier :: [Ghc.CommandLineOption] -> Either String [T.Text -> T.Text]
 parseFilePathModifier opts =
@@ -164,7 +164,7 @@ formatDiagnostic filePathMods m = do
       truncateMsg txt =
         let truncated = T.take 200 txt
         in if T.length txt > 200 then truncated <> "…" else truncated
-      msg = truncateMsg . T.unwords
+      msg = truncateMsg . T.intercalate " • "
         $ T.unwords . T.words . T.pack
         . Ghc.renderWithContext ctx
         <$> filter (not . Ghc.isEmpty ctx) (Ghc.unDecorated (Ghc.diagnosticMessage opts diag))
@@ -177,11 +177,17 @@ formatDiagnostic filePathMods m = do
 handleMessages :: [T.Text -> T.Text] -> ErrMap -> TVar Bool -> Ghc.Messages Ghc.GhcMessage -> IO ()
 handleMessages filePathMods errMap errsUpdated messages = do
   let envelopes = Ghc.getMessages messages
-      errs = mapMaybe (formatDiagnostic filePathMods) (Ghc.bagToList envelopes)
+      -- Filter out parse errors, HLint reports them already
+      errs = mapMaybe (formatDiagnostic filePathMods)
+           . filter (not . isParseError . Ghc.errMsgDiagnostic)
+           $ Ghc.bagToList envelopes
+      isParseError = \case
+        Ghc.GhcPsMessage{} -> True
+        _ -> False
       First mFile =
         foldMap
           (First . fmap Ghc.unpackFS . Ghc.srcSpanFileName_maybe . Ghc.errMsgSpan)
-          (Ghc.getMessages messages)
+          $ Ghc.getMessages messages
   for_ mFile $ \file -> atomically $ do
     SM.insert errs file errMap
     writeTVar errsUpdated True

@@ -1,0 +1,3 @@
+packages:
+  ghc-quickfix.cabal
+  test-modules/test-modules.cabal

@@ -43,7 +43,11 @@ test-suite ghc-quickfix-test
     main-is:          Main.hs
     build-depends:
         base,
-        ghc-quickfix
+        ghc-quickfix,
+        tasty,
+        tasty-hunit,
+        process,
+        directory
 
 executable play
     import:           warnings

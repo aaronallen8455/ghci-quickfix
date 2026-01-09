@@ -1,0 +1,16 @@
+cabal-version:      3.0
+name:               test-modules
+version:            0.1.0.0
+extra-source-files:
+  *.expected
+
+common attrs
+    build-depends:    base,
+                      ghc-quickfix
+    hs-source-dirs:   .
+    default-language: GHC2021
+
+executable ParseError1
+    import: attrs
+    main-is: ParseError1.hs
+    ghc-options: -fplugin GhcQuickfix -fplugin-opt GhcQuickfix:--quickfix-file=ParseError1.qf

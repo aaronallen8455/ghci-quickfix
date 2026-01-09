@@ -78,7 +78,7 @@ parseIncludeParserErrors = elem "--quickfix-include-parser-errors"
 explicitlyEnabled :: [Ghc.CommandLineOption] -> IO Bool
 explicitlyEnabled opts = do
   envEnabled <- (== Just "true") . fmap (map Char.toLower)
-    <$> Env.lookupEnv "GHC_QUICKFIX_ENABLED"
+    <$> Env.lookupEnv "GHCI_QUICKFIX_ENABLED"
   pure $ elem "--quickfix" opts || envEnabled
 
 modifyHscEnv :: Bool -> [Ghc.CommandLineOption] -> Ghc.HscEnv -> IO Ghc.HscEnv

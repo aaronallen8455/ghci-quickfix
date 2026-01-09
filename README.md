@@ -7,7 +7,7 @@ is `errors.err` but this can be customized (see plugin options).
 **NOTE:** If you're using this plugin via
 [`repl-alliance`](https://github.com/aaronallen8455/repl-alliance), you need to
 explicitly enable it by passing `--fplugin-opt ReplAlliance:--quickfix` to GHC
-or by setting the environment variable `GHC_QUICKFIX_ENABLED=true`.
+or by setting the environment variable `GHCI_QUICKFIX_ENABLED=true`.
 
 ## Usage
 
@@ -71,7 +71,7 @@ Plugin options are passed using the `--fplugin-opt` flag. For example:
 
 - **`--quickfix`**
   Explicitly enable the plugin when using `pluginOffByDefault` (e.g., with repl-alliance).
-  Alternative: Set environment variable `GHC_QUICKFIX_ENABLED=true`
+  Alternative: Set environment variable `GHCI_QUICKFIX_ENABLED=true`
 
 ## Compatibility
 

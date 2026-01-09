@@ -58,25 +58,23 @@ Plugin options are passed using the `--fplugin-opt` flag. For example:
 - **`--quickfix-file=<path>`**
   Specify the output file path for diagnostics.
   Default: `errors.err`
+  Alternative: Set environment variable `GHCI_QUICKFIX_FILE=<path>`
 
 - **`--quickfix-include-parser-errors`**
   Include parser errors in the quickfix file.
   Default: Parser errors are excluded (HLint typically reports them)
+  Alternative: Set environment variable `GHCI_QUICKFIX_INCLUDE_PARSER_ERRORS=true`
 
 - **`--quickfix-path-replace=<needle>:<replace>`**
   Replace text in file paths in the quickfix output.
   Example: `--quickfix-path-replace=/home/user:/Users/user`
   Can be specified multiple times for multiple replacements.
   Useful for containerized or remote development environments.
+  Alternative: Set environment variable `GHCI_QUICKFIX_PATH_REPLACE=<needle>:<replace>`
 
 - **`--quickfix`**
   Explicitly enable the plugin when using `pluginOffByDefault` (e.g., with repl-alliance).
   Alternative: Set environment variable `GHCI_QUICKFIX_ENABLED=true`
-
-## Compatibility
-
-This plugin aims to support the 4 latest GHC major releases (i.e. `9.6.*` through `9.12.*`).
-Check the cabal file for the currently supported versions.
 
 ## Output Format
 
@@ -87,3 +85,8 @@ filename.hs:line:col: severity: message
 ```
 
 This format is automatically recognized by Vim's quickfix system.
+
+## Compatibility
+
+This plugin aims to support the 4 latest GHC major releases (i.e. `9.6.*` through `9.12.*`).
+Check the cabal file for the currently supported versions.

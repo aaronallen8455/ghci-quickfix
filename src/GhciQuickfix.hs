@@ -57,23 +57,35 @@ writeQuickfixLoop mErrFilePath errMap updated = forever $ do
     TIO.writeFile (fromMaybe "errors.err" mErrFilePath) $ T.unlines prunedMsgs
     threadDelay 200_000 -- 200ms
 
-parseFilePathModifier :: [Ghc.CommandLineOption] -> Either String [T.Text -> T.Text]
-parseFilePathModifier opts =
-  case partitionEithers (mapMaybe getModifier opts) of
+parseFilePathModifier :: [Ghc.CommandLineOption] -> IO (Either String [T.Text -> T.Text])
+parseFilePathModifier opts = do
+  envMod <- getEnvModifier
+  pure $ case partitionEithers (mapMaybe getModifier opts ++ maybeToList envMod) of
     ([], modifiers) -> Right modifiers
     (errs, _) -> Left (unlines errs)
   where
+  parseReplacement :: String -> String -> Either String (T.Text -> T.Text)
+  parseReplacement source pat =
+    case T.split (== ':') (T.pack pat) of
+      [needle, replace] -> Right $ T.replace needle replace
+      _ -> Left $ "Malformed " ++ source ++ ": expected format 'needle:replace', got '" ++ pat ++ "'"
+  getEnvModifier = do
+    mPat <- Env.lookupEnv "GHCI_QUICKFIX_PATH_REPLACE"
+    pure $ parseReplacement "GHCI_QUICKFIX_PATH_REPLACE environment variable" <$> mPat
   getModifier opt = do
     pat <- stripPrefix "--quickfix-path-replace=" opt
-    case T.split (== ':') (T.pack pat) of
-      [needle, replace] -> Just . Right $ T.replace needle replace
-      _ -> Just . Left $ "Malformed --quickfix-path-replace argument: expected format 'needle:replace', got '" ++ pat ++ "'"
+    Just $ parseReplacement "--quickfix-path-replace argument" pat
 
-parseQuickfixFilePath :: [Ghc.CommandLineOption] -> Maybe FilePath
-parseQuickfixFilePath = getFirst . foldMap (First . stripPrefix "--quickfix-file=")
+parseQuickfixFilePath :: [Ghc.CommandLineOption] -> IO (Maybe FilePath)
+parseQuickfixFilePath opts = do
+  envPath <- Env.lookupEnv "GHCI_QUICKFIX_FILE"
+  pure $ getFirst $ foldMap (First . stripPrefix "--quickfix-file=") opts <> First envPath
 
-parseIncludeParserErrors :: [Ghc.CommandLineOption] -> Bool
-parseIncludeParserErrors = elem "--quickfix-include-parser-errors"
+parseIncludeParserErrors :: [Ghc.CommandLineOption] -> IO Bool
+parseIncludeParserErrors opts = do
+  envEnabled <- (== Just "true") . fmap (map Char.toLower)
+    <$> Env.lookupEnv "GHCI_QUICKFIX_INCLUDE_PARSER_ERRORS"
+  pure $ elem "--quickfix-include-parser-errors" opts || envEnabled
 
 explicitlyEnabled :: [Ghc.CommandLineOption] -> IO Bool
 explicitlyEnabled opts = do
@@ -84,14 +96,15 @@ explicitlyEnabled opts = do
 modifyHscEnv :: Bool -> [Ghc.CommandLineOption] -> Ghc.HscEnv -> IO Ghc.HscEnv
 modifyHscEnv isOffByDefault opts hscEnv = do
   enabled <- explicitlyEnabled opts
-  if not isOffByDefault || enabled then
-    case parseFilePathModifier opts of
+  if not isOffByDefault || enabled then do
+    parseFilePathModifier opts >>= \case
       Left err -> fail err
       Right filePathMods -> do
         errMap <- SM.newIO
         errsUpdated <- newTVarIO False
-        void . Async.async $ writeQuickfixLoop (parseQuickfixFilePath opts) errMap errsUpdated
-        let includeParserErrors = parseIncludeParserErrors opts
+        quickfixFilePath <- parseQuickfixFilePath opts
+        void . Async.async $ writeQuickfixLoop quickfixFilePath errMap errsUpdated
+        includeParserErrors <- parseIncludeParserErrors opts
         pure hscEnv { Ghc.hsc_hooks = modifyHooks includeParserErrors filePathMods (Ghc.hsc_hooks hscEnv) errMap errsUpdated }
   else
     pure hscEnv

@@ -1,5 +1,5 @@
 cabal-version:      3.0
-name:               ghc-quickfix
+name:               ghci-quickfix
 version:            0.1.0.0
 -- synopsis:
 -- description:
@@ -18,8 +18,8 @@ common warnings
 
 library
     import:           warnings
-    exposed-modules:  GhcQuickfix
-    other-modules: GhcQuickfix.GhcFacade
+    exposed-modules:  GhciQuickfix
+    other-modules: GhciQuickfix.GhcFacade
     -- other-extensions:
     build-depends:    base,
                       ghc,
@@ -33,7 +33,7 @@ library
     hs-source-dirs:   src
     default-language: GHC2021
 
-test-suite ghc-quickfix-test
+test-suite ghci-quickfix-test
     import:           warnings
     default-language: GHC2021
     -- other-modules:
@@ -43,7 +43,7 @@ test-suite ghc-quickfix-test
     main-is:          Main.hs
     build-depends:
         base,
-        ghc-quickfix,
+        ghci-quickfix,
         tasty,
         tasty-hunit,
         process,
@@ -56,5 +56,5 @@ test-suite ghc-quickfix-test
 --     main-is:          Main.hs
 --     build-depends:
 --         base,
---         ghc-quickfix
---     ghc-options: -fplugin GhcQuickfix
+--         ghci-quickfix
+--     ghc-options: -fplugin GhciQuickfix

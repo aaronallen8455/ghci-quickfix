@@ -1,4 +1,4 @@
-# ghc-quickfix
+# ghci-quickfix
 
 *NOTE:* If you're using this plugin via
 [`repl-alliance`](https://github.com/aaronallen8455/repl-alliance), you need to

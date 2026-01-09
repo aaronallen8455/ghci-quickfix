@@ -48,20 +48,20 @@ runTest name = do
   when qfExists $ Dir.removeFile qfFile
 
   -- Use cabal repl to keep GHC alive long enough for background thread
-  (Just stdin, Just stdout, _, h) <- Proc.createProcess
+  (Just ghciIn, Just ghciOut, _, h) <- Proc.createProcess
     (Proc.proc "cabal" ["repl", "test-modules:" ++ name])
       { Proc.std_in = Proc.CreatePipe
       , Proc.std_out = Proc.CreatePipe
       , Proc.std_err = Proc.CreatePipe
       }
-  hSetBuffering stdin NoBuffering
+  hSetBuffering ghciIn NoBuffering
 
   -- Wait for GHCi prompt
-  waitForPrompt stdout
+  waitForPrompt ghciOut
 
   -- Quit gracefully, ignoring errors if pipe is already closed
-  void $ hPutStrLn stdin ":quit"
-  void $ hClose stdin
+  void $ hPutStrLn ghciIn ":quit"
+  void $ hClose ghciIn
   void $ Proc.waitForProcess h
 
   -- Check that quickfix file was created and has expected contents
@@ -87,16 +87,16 @@ runTestWarningFix = do
   Dir.copyFile mod2Broken mod2File
 
   -- Use cabal repl
-  (Just stdin, Just stdout, _, h) <- Proc.createProcess
+  (Just ghciIn, Just ghciOut, _, h) <- Proc.createProcess
     (Proc.proc "cabal" ["repl", "test-modules:WarningFix"])
       { Proc.std_in = Proc.CreatePipe
       , Proc.std_out = Proc.CreatePipe
       , Proc.std_err = Proc.CreatePipe
       }
-  hSetBuffering stdin NoBuffering
+  hSetBuffering ghciIn NoBuffering
 
   -- Wait for GHCi prompt after initial compilation
-  waitForPrompt stdout
+  waitForPrompt ghciOut
 
   -- Check that quickfix file was created
   qfExists1 <- Dir.doesFileExist qfFile
@@ -111,10 +111,10 @@ runTestWarningFix = do
   Dir.copyFile mod2Fixed mod2File
 
   -- Reload in the repl
-  void $ try @SomeException $ hPutStrLn stdin ":reload"
+  void $ try @SomeException $ hPutStrLn ghciIn ":reload"
 
   -- Wait for GHCi prompt after reload
-  waitForPrompt stdout
+  waitForPrompt ghciOut
 
   -- Check that quickfix file now only has error, no warning
   actualContents2 <- readFile qfFile
@@ -122,8 +122,8 @@ runTestWarningFix = do
   assertEqual "Expected only error after fix" expectedContents actualContents2
 
   -- Quit gracefully
-  void $ hPutStrLn stdin ":quit"
-  void $ hClose stdin
+  void $ hPutStrLn ghciIn ":quit"
+  void $ hClose ghciIn
   void $ Proc.waitForProcess h
 
   -- Clean up

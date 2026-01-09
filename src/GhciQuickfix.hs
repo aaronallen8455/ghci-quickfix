@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE GADTs #-}
-module GhcQuickfix
+module GhciQuickfix
   ( plugin
   , pluginOffByDefault
   ) where
@@ -30,7 +30,7 @@ import qualified StmContainers.Map as SM
 import qualified System.Directory as Dir
 import qualified System.Environment as Env
 
-import qualified GhcQuickfix.GhcFacade as Ghc
+import qualified GhciQuickfix.GhcFacade as Ghc
 
 type ErrMap = SM.Map FilePath [T.Text]
 

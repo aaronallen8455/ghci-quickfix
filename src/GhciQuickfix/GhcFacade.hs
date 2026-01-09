@@ -1,4 +1,4 @@
-module GhcQuickfix.GhcFacade
+module GhciQuickfix.GhcFacade
   ( module Ghc
   ) where
 

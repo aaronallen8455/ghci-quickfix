@@ -47,7 +47,8 @@ test-suite ghci-quickfix-test
         tasty,
         tasty-hunit,
         process,
-        directory
+        directory,
+        async
 
 -- executable play
 --     import:           warnings

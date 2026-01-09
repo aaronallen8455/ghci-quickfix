@@ -4,3 +4,7 @@
 [`repl-alliance`](https://github.com/aaronallen8455/repl-alliance), you need to
 explicitly enable it by passing `--fplugin-opt ReplAlliance:--quickfix` to GHC
 or by setting the environment variable `GHC_QUICKFIX_ENABLED=true`.
+
+## Plugin Options
+
+- `--quickfix-include-parser-errors`: Include parser errors in the quickfix file. By default, parser errors are excluded as tools like HLint typically report them.

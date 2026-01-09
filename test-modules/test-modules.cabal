@@ -15,6 +15,11 @@ executable ParseError1
     main-is: ParseError1.hs
     ghc-options: -fplugin GhciQuickfix -fplugin-opt GhciQuickfix:--quickfix-file=ParseError1.qf
 
+executable ParseError2
+    import: attrs
+    main-is: ParseError2.hs
+    ghc-options: -fplugin GhciQuickfix -fplugin-opt GhciQuickfix:--quickfix-file=ParseError2.qf -fplugin-opt GhciQuickfix:--quickfix-include-parser-errors
+
 executable TypeErr1
     import: attrs
     main-is: TypeErr1.hs

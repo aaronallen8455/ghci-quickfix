@@ -1,6 +1,7 @@
 module Main (main) where
 
 import           Control.Concurrent (threadDelay)
+import           Control.Concurrent.Async (race)
 import           Control.Exception (SomeException, try)
 import           Control.Monad
 import           Data.List (isInfixOf)
@@ -13,6 +14,7 @@ import           Test.Tasty.HUnit
 main :: IO ()
 main = defaultMain $ testGroup "Tests"
   [ testCase "ParseError1" $ runTest "ParseError1"
+  , testCase "ParseError2" $ runTest "ParseError2"
   , testCase "TypeErr1" $ runTest "TypeErr1"
   , testCase "UnusedVar" $ runTest "UnusedVar"
   , testCase "IncompletePat" $ runTest "IncompletePat"
@@ -25,7 +27,7 @@ testModulePath name = "test-modules/" <> name
 
 -- Wait for GHCi prompt by reading output until we see "ghci>"
 waitForPrompt :: Handle -> IO ()
-waitForPrompt hOut = go ""
+waitForPrompt hOut = void $ race (go "") (threadDelay 3_000_000)
   where
     go acc = do
       ready <- hReady hOut

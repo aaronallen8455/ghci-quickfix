@@ -72,6 +72,9 @@ parseFilePathModifier opts =
 parseQuickfixFilePath :: [Ghc.CommandLineOption] -> Maybe FilePath
 parseQuickfixFilePath = getFirst . foldMap (First . stripPrefix "--quickfix-file=")
 
+parseIncludeParserErrors :: [Ghc.CommandLineOption] -> Bool
+parseIncludeParserErrors = elem "--quickfix-include-parser-errors"
+
 explicitlyEnabled :: [Ghc.CommandLineOption] -> IO Bool
 explicitlyEnabled opts = do
   envEnabled <- (== Just "true") . fmap (map Char.toLower)
@@ -88,11 +91,12 @@ modifyHscEnv isOffByDefault opts hscEnv = do
         errMap <- SM.newIO
         errsUpdated <- newTVarIO False
         void . Async.async $ writeQuickfixLoop (parseQuickfixFilePath opts) errMap errsUpdated
-        pure hscEnv { Ghc.hsc_hooks = modifyHooks filePathMods (Ghc.hsc_hooks hscEnv) errMap errsUpdated }
+        let includeParserErrors = parseIncludeParserErrors opts
+        pure hscEnv { Ghc.hsc_hooks = modifyHooks includeParserErrors filePathMods (Ghc.hsc_hooks hscEnv) errMap errsUpdated }
   else
     pure hscEnv
   where
-    modifyHooks filePathMods hooks (errMap :: ErrMap) (errsUpdated :: TVar Bool) =
+    modifyHooks includeParserErrors filePathMods hooks (errMap :: ErrMap) (errsUpdated :: TVar Bool) =
       let runPhaseOrExistingHook :: Ghc.TPhase res -> IO res
           runPhaseOrExistingHook = maybe Ghc.runPhase (\(Ghc.PhaseHook h) -> h)
             $ Ghc.runPhaseHook hooks
@@ -105,7 +109,7 @@ modifyHscEnv isOffByDefault opts hscEnv = do
             dsWarnVar <- newIORef mempty
             try (runPhaseOrExistingHook $ addDsLogHook (logHookHack dsWarnVar hscEnv) phase) >>= \case
               Left err@(Ghc.SourceError msgs) -> do
-                handleMessages filePathMods errMap errsUpdated msgs
+                handleMessages includeParserErrors filePathMods errMap errsUpdated msgs
                 throw err
               Right res -> do
                 dsWarns <- readIORef dsWarnVar
@@ -120,7 +124,7 @@ modifyHscEnv isOffByDefault opts hscEnv = do
                         Just _ -> do
                           SM.delete (Ghc.ms_hspp_file modSummary) errMap
                           writeTVar errsUpdated True
-                    else handleMessages filePathMods errMap errsUpdated $
+                    else handleMessages includeParserErrors filePathMods errMap errsUpdated $
                       if length tcWarnings == length dsWarns
                       then tcWarnings -- has preferred formatting
                       else dsWarns
@@ -174,16 +178,16 @@ formatDiagnostic filePathMods m = do
     <> ":" <> T.show line <> ":" <> T.show col <> ": " <> severity <> ": " <> msg
 
 -- | Update state given all diagnostics for a module
-handleMessages :: [T.Text -> T.Text] -> ErrMap -> TVar Bool -> Ghc.Messages Ghc.GhcMessage -> IO ()
-handleMessages filePathMods errMap errsUpdated messages = do
+handleMessages :: Bool -> [T.Text -> T.Text] -> ErrMap -> TVar Bool -> Ghc.Messages Ghc.GhcMessage -> IO ()
+handleMessages includeParserErrors filePathMods errMap errsUpdated messages = do
   let envelopes = Ghc.getMessages messages
-      -- Filter out parse errors, HLint reports them already
-      errs = mapMaybe (formatDiagnostic filePathMods)
-           . filter (not . isParseError . Ghc.errMsgDiagnostic)
-           $ Ghc.bagToList envelopes
       isParseError = \case
         Ghc.GhcPsMessage{} -> True
         _ -> False
+      -- Filter out parse errors unless explicitly included
+      errs = mapMaybe (formatDiagnostic filePathMods)
+           . filter (\env -> includeParserErrors || not (isParseError (Ghc.errMsgDiagnostic env)))
+           $ Ghc.bagToList envelopes
       First mFile =
         foldMap
           (First . fmap Ghc.unpackFS . Ghc.srcSpanFileName_maybe . Ghc.errMsgSpan)

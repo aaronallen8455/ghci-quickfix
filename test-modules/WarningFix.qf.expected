@@ -1,0 +1,1 @@
+WarningFix1.hs:6:7: error: Couldn't match type ‘Integer’ with ‘[Char]’ Expected: String Actual: Integer

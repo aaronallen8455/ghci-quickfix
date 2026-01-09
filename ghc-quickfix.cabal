@@ -49,12 +49,12 @@ test-suite ghc-quickfix-test
         process,
         directory
 
-executable play
-    import:           warnings
-    default-language: GHC2021
-    hs-source-dirs:   play
-    main-is:          Main.hs
-    build-depends:
-        base,
-        ghc-quickfix
-    ghc-options: -fplugin GhcQuickfix
+-- executable play
+--     import:           warnings
+--     default-language: GHC2021
+--     hs-source-dirs:   play
+--     main-is:          Main.hs
+--     build-depends:
+--         base,
+--         ghc-quickfix
+--     ghc-options: -fplugin GhcQuickfix

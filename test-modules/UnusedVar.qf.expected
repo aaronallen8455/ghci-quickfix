@@ -1,0 +1,2 @@
+UnusedVar.hs:6:14: warning: Defaulting the type variable ‘a0’ to type ‘Integer’ in the following constraint Num a0 arising from the literal ‘42’
+UnusedVar.hs:6:5: warning: Defined but not used: ‘unused’

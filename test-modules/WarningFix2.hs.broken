@@ -1,0 +1,3 @@
+module WarningFix2 where
+
+bar = 1

@@ -1,0 +1,4 @@
+module WarningFix2 where
+
+bar :: Integer
+bar = 1

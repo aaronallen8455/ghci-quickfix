@@ -14,3 +14,30 @@ executable ParseError1
     import: attrs
     main-is: ParseError1.hs
     ghc-options: -fplugin GhcQuickfix -fplugin-opt GhcQuickfix:--quickfix-file=ParseError1.qf
+
+executable TypeErr1
+    import: attrs
+    main-is: TypeErr1.hs
+    ghc-options: -fplugin GhcQuickfix -fplugin-opt GhcQuickfix:--quickfix-file=TypeErr1.qf
+
+executable UnusedVar
+    import: attrs
+    main-is: UnusedVar.hs
+    ghc-options: -fplugin GhcQuickfix -fplugin-opt GhcQuickfix:--quickfix-file=UnusedVar.qf -Wall
+
+executable IncompletePat
+    import: attrs
+    main-is: IncompletePat.hs
+    ghc-options: -fplugin GhcQuickfix -fplugin-opt GhcQuickfix:--quickfix-file=IncompletePat.qf -Wincomplete-patterns
+
+executable MultiMod
+    import: attrs
+    main-is: MultiMod1.hs
+    other-modules: MultiMod2
+    ghc-options: -fplugin GhcQuickfix -fplugin-opt GhcQuickfix:--quickfix-file=MultiMod.qf -Wall
+
+executable WarningFix
+    import: attrs
+    main-is: WarningFix1.hs
+    other-modules: WarningFix2
+    ghc-options: -fplugin GhcQuickfix -fplugin-opt GhcQuickfix:--quickfix-file=WarningFix.qf -Wall

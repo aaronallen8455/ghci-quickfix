@@ -22,6 +22,3 @@ import           GHC.Tc.Types as Ghc hiding (DefaultingPlugin, TcPlugin)
 import           GHC.Utils.Logger as Ghc
 import           GHC.Driver.Config.Diagnostic as Ghc
 import           GHC.HsToCore.Errors.Types as Ghc
-#if !MIN_VERSION_ghc(9,8,0)
-import           GHC.Tc.Errors.Ppr as Ghc
-#endif

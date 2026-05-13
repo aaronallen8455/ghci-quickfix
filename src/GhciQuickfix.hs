@@ -236,13 +236,7 @@ logHookHack dsWarnVar hscEnv logAction flags clss srcSpan sdoc = do
                 , Ghc.diagHints = []
                 }
             diagOpts = Ghc.initDiagOpts $ Ghc.hsc_dflags hscEnv
-            mkUnknownDiag =
-#if MIN_VERSION_ghc(9,8,0)
-              Ghc.UnknownDiagnostic id
-#else
-              Ghc.UnknownDiagnostic
-#endif
-            ghcMessage = Ghc.GhcDsMessage . Ghc.DsUnknownMessage $ mkUnknownDiag diag
+            ghcMessage = Ghc.GhcDsMessage . Ghc.DsUnknownMessage $ Ghc.mkUnknownDiagnostic diag
             warn = Ghc.mkMsgEnvelope diagOpts srcSpan Ghc.neverQualify ghcMessage
         modifyIORef dsWarnVar (Ghc.addMessage warn)
     _ -> pure ()

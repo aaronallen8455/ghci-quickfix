@@ -18,9 +18,10 @@ import qualified Data.Char as Char
 import           Data.Either (partitionEithers)
 import           Data.Foldable
 import           Data.IORef
-import           Data.List (stripPrefix)
+import qualified Data.List as List
 import           Data.Maybe
 import           Data.Monoid (First(..))
+import qualified Data.Ord as Ord
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
@@ -32,7 +33,11 @@ import qualified System.Environment as Env
 
 import qualified GhciQuickfix.GhcFacade as Ghc
 
-type ErrMap = SM.Map FilePath [T.Text]
+-- | STM Map is used to avoid contention between modules compiled in parrallel,
+-- although it isn't clear if it actually helps since contention will still
+-- happen with the STVars used in the same transaction.
+-- The Int paired with the errors is used for ordering.
+type ErrMap = SM.Map FilePath (Int, [T.Text])
 
 plugin :: Ghc.Plugin
 plugin = Ghc.defaultPlugin
@@ -54,7 +59,11 @@ writeQuickfixLoop mErrFilePath errMap updated = forever $ do
       writeTVar updated False
       DF.foldM (F.generalize F.list) (SM.unfoldlM errMap)
     prunedMsgs <- pruneDeletedFiles msgs errMap
-    TIO.writeFile (fromMaybe "errors.err" mErrFilePath) $ T.unlines prunedMsgs
+    TIO.writeFile (fromMaybe "errors.err" mErrFilePath)
+      . T.unlines . foldMap snd
+      -- Sort in reverse so that the first error in the list is the last one to
+      -- be emitted by the compiler
+      $ List.sortOn Ord.Down prunedMsgs
     threadDelay 200_000 -- 200ms
 
 parseFilePathModifier :: [Ghc.CommandLineOption] -> IO (Either String [T.Text -> T.Text])
@@ -73,13 +82,13 @@ parseFilePathModifier opts = do
     mPat <- Env.lookupEnv "GHCI_QUICKFIX_PATH_REPLACE"
     pure $ parseReplacement "GHCI_QUICKFIX_PATH_REPLACE environment variable" <$> mPat
   getModifier opt = do
-    pat <- stripPrefix "--quickfix-path-replace=" opt
+    pat <- List.stripPrefix "--quickfix-path-replace=" opt
     Just $ parseReplacement "--quickfix-path-replace argument" pat
 
 parseQuickfixFilePath :: [Ghc.CommandLineOption] -> IO (Maybe FilePath)
 parseQuickfixFilePath opts = do
   envPath <- Env.lookupEnv "GHCI_QUICKFIX_FILE"
-  pure $ getFirst $ foldMap (First . stripPrefix "--quickfix-file=") opts <> First envPath
+  pure $ getFirst $ foldMap (First . List.stripPrefix "--quickfix-file=") opts <> First envPath
 
 parseIncludeParserErrors :: [Ghc.CommandLineOption] -> IO Bool
 parseIncludeParserErrors opts = do
@@ -102,14 +111,15 @@ modifyHscEnv isOffByDefault opts hscEnv = do
       Right filePathMods -> do
         errMap <- SM.newIO
         errsUpdated <- newTVarIO False
+        counter <- newTVarIO 0
         quickfixFilePath <- parseQuickfixFilePath opts
         void . Async.async $ writeQuickfixLoop quickfixFilePath errMap errsUpdated
         includeParserErrors <- parseIncludeParserErrors opts
-        pure hscEnv { Ghc.hsc_hooks = modifyHooks includeParserErrors filePathMods (Ghc.hsc_hooks hscEnv) errMap errsUpdated }
+        pure hscEnv { Ghc.hsc_hooks = modifyHooks includeParserErrors filePathMods (Ghc.hsc_hooks hscEnv) errMap errsUpdated counter }
   else
     pure hscEnv
   where
-    modifyHooks includeParserErrors filePathMods hooks (errMap :: ErrMap) (errsUpdated :: TVar Bool) =
+    modifyHooks includeParserErrors filePathMods hooks (errMap :: ErrMap) (errsUpdated :: TVar Bool) (counter :: TVar Int) =
       let runPhaseOrExistingHook :: Ghc.TPhase res -> IO res
           runPhaseOrExistingHook = maybe Ghc.runPhase (\(Ghc.PhaseHook h) -> h)
             $ Ghc.runPhaseHook hooks
@@ -122,7 +132,7 @@ modifyHscEnv isOffByDefault opts hscEnv = do
             dsWarnVar <- newIORef mempty
             try (runPhaseOrExistingHook $ addDsLogHook (logHookHack dsWarnVar hscEnv) phase) >>= \case
               Left err@(Ghc.SourceError msgs) -> do
-                handleMessages includeParserErrors filePathMods errMap errsUpdated msgs
+                handleMessages includeParserErrors filePathMods errMap errsUpdated counter msgs
                 throw err
               Right res -> do
                 dsWarns <- readIORef dsWarnVar
@@ -137,7 +147,7 @@ modifyHscEnv isOffByDefault opts hscEnv = do
                         Just _ -> do
                           SM.delete (Ghc.ms_hspp_file modSummary) errMap
                           writeTVar errsUpdated True
-                    else handleMessages includeParserErrors filePathMods errMap errsUpdated $
+                    else handleMessages includeParserErrors filePathMods errMap errsUpdated counter $
                       if length tcWarnings == length dsWarns
                       then tcWarnings -- has preferred formatting
                       else dsWarns
@@ -192,8 +202,15 @@ formatDiagnostic filePathMods m = do
     <> severity <> ": " <> msg
 
 -- | Update state given all diagnostics for a module
-handleMessages :: Bool -> [T.Text -> T.Text] -> ErrMap -> TVar Bool -> Ghc.Messages Ghc.GhcMessage -> IO ()
-handleMessages includeParserErrors filePathMods errMap errsUpdated messages = do
+handleMessages
+  :: Bool
+  -> [T.Text -> T.Text]
+  -> ErrMap
+  -> TVar Bool
+  -> TVar Int
+  -> Ghc.Messages Ghc.GhcMessage
+  -> IO ()
+handleMessages includeParserErrors filePathMods errMap errsUpdated counter messages = do
   let envelopes = Ghc.getMessages messages
       isParseError = \case
         Ghc.GhcPsMessage{} -> True
@@ -207,11 +224,12 @@ handleMessages includeParserErrors filePathMods errMap errsUpdated messages = do
           (First . fmap Ghc.unpackFS . Ghc.srcSpanFileName_maybe . Ghc.errMsgSpan)
           $ Ghc.getMessages messages
   for_ mFile $ \file -> atomically $ do
-    SM.insert errs file errMap
+    n <- stateTVar counter (\x -> let !nx = x + 1 in (x, nx))
+    SM.insert (n, errs) file errMap
     writeTVar errsUpdated True
 
 -- | Remove errors for files that no longer exist
-pruneDeletedFiles :: [(FilePath, [T.Text])] -> ErrMap -> IO [T.Text]
+pruneDeletedFiles :: [(FilePath, (Int, [T.Text]))] -> ErrMap -> IO [(Int, [T.Text])]
 pruneDeletedFiles errs errMap = do
   let files = fst <$> errs
   deletedFiles <- fmap catMaybes $
@@ -220,7 +238,7 @@ pruneDeletedFiles errs errMap = do
         True -> pure Nothing
         False -> pure (Just file)
   atomically $ traverse_ (`SM.delete` errMap) deletedFiles
-  pure . foldMap snd $ filter (not . (`elem` deletedFiles) . fst) errs
+  pure . fmap snd $ filter (not . (`elem` deletedFiles) . fst) errs
 
 -- | Currently no good way to get warnings from desugarer, so a log action hook
 -- is used to get the raw SDoc. Note: unfortunately this will also capture

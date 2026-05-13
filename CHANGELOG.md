@@ -4,6 +4,7 @@
 
 * Support GHC 9.14
 * Drop support for 9.6
+* Sort errors in quickfix file by order of emission
 
 ## 0.1.0.0 -- 2026-01-09
 

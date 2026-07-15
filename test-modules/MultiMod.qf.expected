@@ -1,3 +1,3 @@
-MultiMod2.hs:3:1: warning: Top-level binding with no type signature: bar :: Integer
-MultiMod2.hs:3:7: warning: Defaulting the type variable ‘a0’ to type ‘Integer’ in the following constraint Num a0 arising from the literal ‘1’
 MultiMod1.hs:6:7: error: Couldn't match type ‘Integer’ with ‘[Char]’ Expected: String Actual: Integer
+MultiMod2.hs:3:7: warning: Defaulting the type variable ‘a0’ to type ‘Integer’ in the following constraint Num a0 arising from the literal ‘1’
+MultiMod2.hs:3:1: warning: Top-level binding with no type signature: bar :: Integer

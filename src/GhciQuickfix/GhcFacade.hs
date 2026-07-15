@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 module GhciQuickfix.GhcFacade
   ( module Ghc
   ) where

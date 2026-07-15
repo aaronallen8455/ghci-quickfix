@@ -22,6 +22,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
 import           Data.Monoid (First(..))
+import qualified Data.Ord as Ord
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -84,7 +85,8 @@ writeQuickfixLoop mErrFilePath = forever $
       prunedMsgs <- pruneDeletedFiles msgs
       TIO.writeFile (fromMaybe "errors.err" mErrFilePath)
         . T.unlines . foldMap' errors
-        $ List.sortOn ordering prunedMsgs
+        -- sort so that the last compiled module is the first in the list
+        $ List.sortOn (Ord.Down . ordering) prunedMsgs
       threadDelay 200_000 -- 200ms
 
 parseFilePathModifier :: [Ghc.CommandLineOption] -> IO (Either String [T.Text -> T.Text])
@@ -234,6 +236,11 @@ handleMessages includeParserErrors filePathMods messages = do
         _ -> False
       -- Filter out parse errors unless explicitly included
       errs = mapMaybe (formatDiagnostic filePathMods)
+             -- sort to match the order of appearance in GHCi
+           . List.sortOn
+               ( Ord.Down . fmap (\s -> (Ghc.srcSpanStartLine s, Ghc.srcSpanStartCol s))
+               . Ghc.srcSpanToRealSrcSpan . Ghc.errMsgSpan
+               )
            . filter (\env -> includeParserErrors || not (isParseError (Ghc.errMsgDiagnostic env)))
            $ Ghc.bagToList envelopes
       First mFile =

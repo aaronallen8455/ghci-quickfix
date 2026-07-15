@@ -6,7 +6,7 @@ module GhciQuickfix
   , pluginOffByDefault
   ) where
 
-import           Control.Concurrent (threadDelay)
+import           Control.Concurrent (threadDelay, MVar, newEmptyMVar, tryPutMVar)
 import qualified Control.Concurrent.Async as Async
 import           Control.Concurrent.STM.TVar
 import           Control.Exception.Safe
@@ -15,6 +15,7 @@ import           Control.Monad.STM
 import qualified Data.Char as Char
 import           Data.Either (partitionEithers)
 import           Data.Foldable
+import           Data.Functor
 import           Data.IORef
 import qualified Data.List as List
 import           Data.Map.Strict (Map)
@@ -28,6 +29,7 @@ import qualified Data.Text.IO as TIO
 import qualified System.Directory as Dir
 import qualified System.Environment as Env
 import           System.IO (stderr, hPutStrLn)
+import           System.IO.Unsafe (unsafePerformIO)
 
 import qualified GhciQuickfix.GhcFacade as Ghc
 
@@ -37,6 +39,22 @@ data Errors = Errors
   { ordering :: !Int -- track the ordering of module compilation
   , errors :: ![T.Text]
   }
+
+{-# NOINLINE globalErrMap #-}
+globalErrMap :: ErrMap
+globalErrMap = unsafePerformIO (newTVarIO mempty)
+
+{-# NOINLINE globalErrsUpdated #-}
+globalErrsUpdated :: TVar Bool
+globalErrsUpdated = unsafePerformIO (newTVarIO False)
+
+{-# NOINLINE globalCounter #-}
+globalCounter :: IORef Int
+globalCounter = unsafePerformIO (newIORef 0)
+
+{-# NOINLINE writerThreadLock #-}
+writerThreadLock :: MVar ()
+writerThreadLock = unsafePerformIO newEmptyMVar
 
 plugin :: Ghc.Plugin
 plugin = Ghc.defaultPlugin
@@ -51,8 +69,8 @@ pluginOffByDefault = plugin
 
 -- | Background process that writes the quickfix file when errors change. Adds a
 -- delay to mitigate excessive IO.
-writeQuickfixLoop :: Maybe FilePath -> ErrMap -> TVar Bool -> IO ()
-writeQuickfixLoop mErrFilePath errMap updated = forever $
+writeQuickfixLoop :: Maybe FilePath -> IO ()
+writeQuickfixLoop mErrFilePath = forever $
   handleAny
     (\err -> do
       hPutStrLn stderr $ "ghci-quickfix: " <> displayException err
@@ -60,10 +78,10 @@ writeQuickfixLoop mErrFilePath errMap updated = forever $
     )
     $ do
       msgs <- atomically $ do
-        check =<< readTVar updated
-        writeTVar updated False
-        Map.toList <$> readTVar errMap
-      prunedMsgs <- pruneDeletedFiles msgs errMap
+        isUpdated <- swapTVar globalErrsUpdated False
+        check isUpdated
+        Map.toList <$> readTVar globalErrMap
+      prunedMsgs <- pruneDeletedFiles msgs
       TIO.writeFile (fromMaybe "errors.err" mErrFilePath)
         . T.unlines . foldMap' errors
         $ List.sortOn ordering prunedMsgs
@@ -112,17 +130,16 @@ modifyHscEnv isOffByDefault opts hscEnv = do
     parseFilePathModifier opts >>= \case
       Left err -> fail err
       Right filePathMods -> do
-        errMap <- newTVarIO mempty
-        errsUpdated <- newTVarIO False
-        counter <- newIORef 0
         quickfixFilePath <- parseQuickfixFilePath opts
-        void . Async.async $ writeQuickfixLoop quickfixFilePath errMap errsUpdated
+        started <- tryPutMVar writerThreadLock ()
+        when started $
+          void . Async.async $ writeQuickfixLoop quickfixFilePath
         includeParserErrors <- parseIncludeParserErrors opts
-        pure hscEnv { Ghc.hsc_hooks = modifyHooks includeParserErrors filePathMods (Ghc.hsc_hooks hscEnv) errMap errsUpdated counter }
+        pure hscEnv { Ghc.hsc_hooks = modifyHooks includeParserErrors filePathMods (Ghc.hsc_hooks hscEnv) }
   else
     pure hscEnv
   where
-    modifyHooks includeParserErrors filePathMods hooks (errMap :: ErrMap) (errsUpdated :: TVar Bool) (counter :: IORef Int) =
+    modifyHooks includeParserErrors filePathMods hooks =
       let runPhaseOrExistingHook :: Ghc.TPhase res -> IO res
           runPhaseOrExistingHook = maybe Ghc.runPhase (\(Ghc.PhaseHook h) -> h)
             $ Ghc.runPhaseHook hooks
@@ -135,7 +152,7 @@ modifyHscEnv isOffByDefault opts hscEnv = do
             dsWarnVar <- newIORef mempty
             try (runPhaseOrExistingHook $ addDsLogHook (logHookHack dsWarnVar hscEnv) phase) >>= \case
               Left err@(Ghc.SourceError msgs) -> do
-                handleMessages includeParserErrors filePathMods errMap errsUpdated counter msgs
+                handleMessages includeParserErrors filePathMods msgs
                 throw err
               Right res -> do
                 dsWarns <- readIORef dsWarnVar
@@ -145,12 +162,12 @@ modifyHscEnv isOffByDefault opts hscEnv = do
                     then atomically $ do
                       -- Module compiled without errors or warnings so delete map entry if exists
                       let modFile = Ghc.ms_hspp_file modSummary
-                      entryDeleted <- stateTVar errMap $ \m ->
+                      entryDeleted <- stateTVar globalErrMap $ \m ->
                         let (mOld, m') = Map.updateLookupWithKey (\_ _ -> Nothing) modFile m
                         in (isJust mOld, m')
                       when entryDeleted $
-                        writeTVar errsUpdated True
-                    else handleMessages includeParserErrors filePathMods errMap errsUpdated counter $
+                        writeTVar globalErrsUpdated True
+                    else handleMessages includeParserErrors filePathMods $
                       if length tcWarnings == length dsWarns
                       then tcWarnings -- has preferred formatting
                       else dsWarns
@@ -208,12 +225,9 @@ formatDiagnostic filePathMods m = do
 handleMessages
   :: Bool
   -> [T.Text -> T.Text]
-  -> ErrMap
-  -> TVar Bool
-  -> IORef Int
   -> Ghc.Messages Ghc.GhcMessage
   -> IO ()
-handleMessages includeParserErrors filePathMods errMap errsUpdated counter messages = do
+handleMessages includeParserErrors filePathMods messages = do
   let envelopes = Ghc.getMessages messages
       isParseError = \case
         Ghc.GhcPsMessage{} -> True
@@ -228,21 +242,21 @@ handleMessages includeParserErrors filePathMods errMap errsUpdated counter messa
           envelopes
   for_ mFile $ \file ->
     unless (null errs) $ do
-      n <- atomicModifyIORef' counter (\x -> let !nx = x + 1 in (nx, x))
+      n <- atomicModifyIORef' globalCounter (\x -> let !nx = x + 1 in (nx, x))
       atomically $ do
-        modifyTVar' errMap (Map.insert file (Errors n errs))
-        writeTVar errsUpdated True
+        modifyTVar' globalErrMap (Map.insert file (Errors n errs))
+        writeTVar globalErrsUpdated True
 
 -- | Remove errors for files that no longer exist
-pruneDeletedFiles :: [(FilePath, Errors)] -> ErrMap -> IO [Errors]
-pruneDeletedFiles errs errMap = do
+pruneDeletedFiles :: [(FilePath, Errors)] -> IO [Errors]
+pruneDeletedFiles errs = do
   let files = fst <$> errs
   deletedFiles <-
     (`foldMap'` files) $ \file ->
-      Dir.doesFileExist file >>= \case
-        True -> pure mempty
-        False -> pure (Set.singleton file)
-  atomically $ modifyTVar' errMap (`Map.withoutKeys` deletedFiles)
+      Dir.doesFileExist file <&> \case
+        True -> mempty
+        False -> Set.singleton file
+  atomically $ modifyTVar' globalErrMap (`Map.withoutKeys` deletedFiles)
   pure . fmap snd $ filter ((`Set.notMember` deletedFiles) . fst) errs
 
 -- | Currently no good way to get warnings from desugarer, so a log action hook

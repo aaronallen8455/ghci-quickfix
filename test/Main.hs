@@ -68,13 +68,14 @@ runTest name = do
   void $ Proc.waitForProcess h
   hClose hDevNull
 
+  qfExists' <- Dir.doesFileExist qfFile
   -- Check that quickfix file was created and has expected contents
-  actualContents <- readFile qfFile
+  actualContents <- if qfExists' then readFile qfFile else pure ""
   expectedContents <- readFile $ qfFile ++ ".expected"
   assertEqual "Expected quickfix output" expectedContents actualContents
 
   -- Clean up
-  Dir.removeFile qfFile
+  when qfExists' (Dir.removeFile qfFile)
 
 runTestWarningFix :: Assertion
 runTestWarningFix = do
